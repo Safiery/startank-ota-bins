@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-18T00:00:00Z",
+  "channel": "test",
+  "notice": "TEST firmware for Safiery Connect app development. Public so the app can fetch it without credentials. Not for production or customer use.",
+  "products": [
+    {
+      "product": "star-tank",
+      "releases": [
+        {
+          "variant": "fuel",
+          "hardwareRevisions": [
+            "*"
+          ],
+          "version": "2.0.1",
+          "versionVerifiable": false,
+          "releaseNotes": "Test build for Safiery Connect app development. Built from StarTank firmware ea91b64 (working tree dirty).",
+          "url": "https://raw.githubusercontent.com/gachi164/startank-ota-bins/main/startank/fuel/StarTankFuelOTA.zip",
+          "sha256": "9f0ee3dbf7249558b8aaf7946d387226757444aec175e2a0493f200832c3c970",
+          "sizeBytes": 368011,
+          "imageSizeBytes": 367132,
+          "mcubootName": "StarTankFuel1",
+          "mcubootVersion": "0.0.0+0",
+          "loadAddress": 49664,
+          "board": "Star Tank",
+          "soc": "nRF52840_QIAA",
+          "imageMode": "confirmOnly",
+          "minBatteryVolts": 2.8,
+          "mandatory": false,
+          "minAppVersion": "1.0.0"
+        },
+        {
+          "variant": "water",
+          "hardwareRevisions": [
+            "*"
+          ],
+          "version": "2.0.1",
+          "versionVerifiable": false,
+          "releaseNotes": "Test build for Safiery Connect app development. Built from StarTank firmware ea91b64.",
+          "url": "https://raw.githubusercontent.com/gachi164/startank-ota-bins/main/startank/water/StarTankWaterOTA.zip",
+          "sha256": "4f3803a4cc8aa79ef0897d2716608167488a47056a76077a71d9f5734fe07aec",
+          "sizeBytes": 367904,
+          "imageSizeBytes": 367036,
+          "mcubootName": "StarTank",
+          "mcubootVersion": "0.0.0+0",
+          "loadAddress": 49664,
+          "board": "Star Tank",
+          "soc": "nRF52840_QIAA",
+          "imageMode": "confirmOnly",
+          "minBatteryVolts": 2.8,
+          "mandatory": false,
+          "minAppVersion": "1.0.0"
+        }
+      ]
+    }
+  ]
+}
