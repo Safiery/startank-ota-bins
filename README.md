@@ -51,7 +51,9 @@ python3 -m unittest discover -s tools -p 'test_*.py'
 
 The check matches the URLs, ZIP sizes and SHA-256 values in `manifest.json` to both
 packages. It reads each Nordic manifest to check the fuel or water identity, board,
-SoC, load address, application size and MCUboot version. No device is needed.
+SoC and application size. It reads the MCUboot image header to check the version
+and load address, recomputes the image digest including the protected TLVs, and
+checks it against the embedded SHA-256 and known fuel or water identity. No device is needed.
 The workflow runs without release credentials. A passing check establishes package
 consistency only. Build provenance, signature trust, hardware testing and authorisation
 for public distribution require their own evidence.

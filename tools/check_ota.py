@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import struct
 import sys
 from zipfile import BadZipFile, ZipFile
 
@@ -15,6 +16,10 @@ VARIANTS = {
     "fuel": ("startank/fuel/StarTankFuelOTA.zip", "StarTankFuel1"),
     "water": ("startank/water/StarTankWaterOTA.zip", "StarTank"),
 }
+KNOWN_IMAGES = {
+    "eb2cd2d116501d6e289e99ff957f0a243b416332a2d03001bfd509a015298c5e": "fuel",
+    "998109a16869ec0fc549868f5f9be467f23189480f7cb242e2e5b4f3428b9d33": "water",
+}
 
 
 def require(condition, message):
@@ -22,17 +27,84 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def check_package(root, release):
+def version_key(value):
+    """Safiery Connect ignores build metadata and compares prereleases lexically."""
+    require(isinstance(value, str), "invalid version for Safiery Connect")
+    text = value.strip().removeprefix("v").split("+", 1)[0]
+    core, _, prerelease = text.partition("-")
+    require(re.fullmatch(r"[0-9]+(?:[.][0-9]+){0,2}", core), "invalid version for Safiery Connect")
+    numbers = [int(part) for part in core.split(".")]
+    require(max(numbers) <= 2147483647, "invalid version for Safiery Connect")
+    numbers.extend([0] * (3 - len(numbers)))
+    return (*numbers, not prerelease, prerelease.encode("utf-16-be", errors="surrogatepass"))
+
+
+def check_metadata(release):
     variant = release["variant"]
-    path, image_name = VARIANTS[variant]
     for field in ("version", "minAppVersion"):
         value = release.get(field)
         if field == "minAppVersion" and value is None:
             continue
-        core = value.strip().removeprefix("v").split("+")[0].split("-")[0] if isinstance(value, str) else ""
-        require(re.fullmatch(r"[0-9]+(?:[.][0-9]+){0,2}", core)
-                and all(int(part) <= 2147483647 for part in core.split(".")),
-                f"{variant}: invalid {field} for Safiery Connect")
+        version_key(value)
+    require("releaseNotes" not in release or isinstance(release["releaseNotes"], str),
+            f"{variant}: releaseNotes must be text")
+    for field in ("versionVerifiable", "mandatory"):
+        require(field not in release or type(release[field]) is bool, f"{variant}: {field} must be boolean")
+    for field in ("sizeBytes", "imageSizeBytes", "loadAddress"):
+        value = release[field]
+        require(type(value) in (int, float) and 0 < value < 2**53 and value == int(value),
+                f"{variant}: {field} must be a positive integer")
+    if "minBatteryVolts" in release:
+        voltage = release["minBatteryVolts"]
+        require(type(voltage) in (int, float) and 0 < voltage <= sys.float_info.max,
+                f"{variant}: minBatteryVolts must be a positive finite number")
+    if "hardwareRevisions" in release:
+        revisions = release["hardwareRevisions"]
+        require(isinstance(revisions, list) and all(isinstance(r, str) and r.strip() for r in revisions),
+                f"{variant}: hardwareRevisions must contain nonempty strings")
+
+
+def check_image(data, metadata, variant):
+    """Validate MCUboot structure and its embedded image digest as Connect does."""
+    require(36 <= len(data) <= SLOT_BYTES, "invalid MCUboot image size")
+    magic, address, header_size, protected_size, body_size, flags = struct.unpack_from("<IIHHII", data)
+    require(magic == 0x96F3B83D and header_size >= 32 and header_size % 4 == 0
+            and body_size > 0 and not flags & 0x3C, "invalid MCUboot image header")
+    major, minor, revision, build = struct.unpack_from("<BBHI", data, 20)
+    require(f"{major}.{minor}.{revision}+{build}" == metadata["version_MCUBOOT"],
+            "MCUboot header version differs from package")
+    require(address in (0, metadata["load_address"]), "MCUboot header load address differs from package")
+
+    body_end = header_size + body_size
+    hash_end = body_end + protected_size
+    require(hash_end + 4 <= len(data), "truncated MCUboot image or protected TLVs")
+    if protected_size:
+        require(protected_size >= 4 and struct.unpack_from("<HH", data, body_end) == (0x6908, protected_size),
+                "invalid protected MCUboot TLVs")
+    marker, length = struct.unpack_from("<HH", data, hash_end)
+    end = hash_end + length
+    require(marker == 0x6907 and length >= 4 and end <= len(data), "invalid MCUboot integrity TLVs")
+    cursor = hash_end + 4
+    embedded = None
+    while cursor < end:
+        require(cursor + 4 <= end, "truncated MCUboot TLV header")
+        kind, size = struct.unpack_from("<HH", data, cursor)
+        cursor += 4
+        require(cursor + size <= end, "truncated MCUboot TLV value")
+        if kind == 0x10:
+            require(size == 32 and embedded is None, "invalid or duplicate MCUboot SHA-256")
+            embedded = data[cursor:cursor + size]
+        cursor += size
+    digest = hashlib.sha256(data[:hash_end]).digest()
+    require(embedded == digest, "MCUboot image SHA-256 mismatch")
+    require(KNOWN_IMAGES.get(digest.hex(), variant) == variant, "MCUboot image belongs to the other sensor variant")
+    return digest.hex()
+
+
+def check_package(root, release):
+    variant = release["variant"]
+    path, image_name = VARIANTS[variant]
+    check_metadata(release)
     package = root / path
     require(package.resolve() == package, f"{variant}: package path must be local")
     require(release["url"] == RAW_URL + path, f"{variant}: unexpected download URL")
@@ -65,21 +137,23 @@ def check_package(root, release):
         require(image["board"] == "Star Tank" and image["soc"] == "nRF52840_QIAA"
                 and image["load_address"] == 49664, f"{variant}: wrong hardware or load address")
         require(release["imageMode"] == "confirmOnly", f"{variant}: wrong legacy image mode")
-        require(archive.testzip() is None, f"{variant}: ZIP member integrity check failed")
+        return check_image(archive.read("app_update.bin"), image, variant)
 
 
 def check_manifest(root):
     manifest = json.loads((root / "manifest.json").read_text())
-    require(manifest["schemaVersion"] == 1 and manifest["channel"] == "test",
+    require(type(manifest["schemaVersion"]) in (int, float) and manifest["schemaVersion"] == 1
+            and manifest["channel"] == "test",
             "expected the version 1 test-channel manifest")
+    for field in ("generatedAt", "notice"):
+        require(manifest.get(field) is None or isinstance(manifest[field], str), f"{field} must be text or null")
     products = manifest["products"]
     require(len(products) == 1 and products[0]["product"] == "star-tank",
             "expected one StarTank product")
     releases = products[0]["releases"]
     require(sorted(entry["variant"] for entry in releases) == sorted(VARIANTS),
             "expected one fuel and one water release")
-    for release in releases:
-        check_package(root, release)
+    return {release["variant"]: check_package(root, release) for release in releases}
 
 
 if __name__ == "__main__":
