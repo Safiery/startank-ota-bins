@@ -39,3 +39,19 @@ They are **not for production or customer use**:
 Production hosting is still to be decided — who owns the domain, who publishes the manifest, and
 what the release-approval process is. When that exists, this repository should be retired rather
 than promoted.
+
+## Checking a proposed package change
+
+Pull requests to `main` run a read-only check of the current test distribution. To run it locally:
+
+```sh
+python3 tools/check_ota.py
+python3 -m unittest discover -s tools -p 'test_*.py'
+```
+
+The check matches the URLs, ZIP sizes and SHA-256 values in `manifest.json` to both
+packages. It reads each Nordic manifest to check the fuel or water identity, board,
+SoC, load address, application size and MCUboot version. No device is needed.
+The workflow runs without release credentials. A passing check establishes package
+consistency only. Build provenance, signature trust, hardware testing and authorisation
+for public distribution require their own evidence.
